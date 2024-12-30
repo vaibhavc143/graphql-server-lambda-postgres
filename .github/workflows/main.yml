@@ -1,0 +1,65 @@
+name: CI/CD for GraphQL Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy GraphQL Server
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Test Application
+      run: npm test
+
+    - name: Fetch Secrets from AWS Secrets Manager
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      run: |
+        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+        aws configure set default.region ap-south-1
+
+        # Fetch secrets and export them to a .env file
+        aws secretsmanager get-secret-value --secret-id GraphQLSecrets | jq -r '.SecretString' > .env
+
+    - name: Upload to EC2
+      env:
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+        EC2_USER: ${{ secrets.EC2_USER }}
+        EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      run: |
+        # Save the private key
+        echo "$EC2_SSH_PRIVATE_KEY" > ec2_key.pem
+        chmod 600 ec2_key.pem
+
+        # SCP files to EC2 instance
+        scp -i ec2_key.pem -r . $EC2_USER@$EC2_HOST:/home/$EC2_USER/graphql-server
+
+    - name: Deploy on EC2
+      env:
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+        EC2_USER: ${{ secrets.EC2_USER }}
+        EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      run: |
+        ssh -i ec2_key.pem $EC2_USER@$EC2_HOST << 'EOF'
+        cd /home/$EC2_USER/graphql-server
+
+        # Install dependencies and restart server
+        npm install
+        pm2 restart all || pm2 start index.js --name graphql-server
+EOF
