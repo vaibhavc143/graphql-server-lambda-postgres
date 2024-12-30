@@ -62,4 +62,3 @@ jobs:
         # Install dependencies and restart server
         npm install
         pm2 restart all || pm2 start index.js --name graphql-server
-EOF
